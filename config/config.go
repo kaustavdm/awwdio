@@ -1,47 +1,57 @@
 package config
 
 import (
-	"flag"
+	"fmt"
 	"os"
 	"strconv"
 )
 
 type Config struct {
 	// The port on which the server will listen
-	Port int `json:"port"`
+	Port string
 	// Twilio Account SID
-	TwilioAccountSID string `json:"twilio_account_sid"`
+	TwilioAccountSID string
 	// Twilio API Key
-	TwilioApiKey string `json:"twilio_api_key"`
+	TwilioApiKey string
 	// Twilio API Secret
-	TwilioApiSecret string `json:"twilio_api_secret"`
+	TwilioApiSecret string
 }
 
-// loadConfig loads the configuration from environment variables or command line flags and returns a config struct
-// Command line flags take precedence over environment variables
+// LoadConfig loads the configuration from environment variables
 func LoadConfig() (*Config, error) {
-	cfg := &Config{}
-
-	// Load environment variables with defaults
-	cfg.Port = 8080 // Default port
-	if portStr := os.Getenv("PORT"); portStr != "" {
-		if port, err := strconv.Atoi(portStr); err == nil {
-			cfg.Port = port
-		}
-		// Ignore error, keep default if parsing fails
+	cfg := &Config{
+		Port: "8080", // Default port
 	}
 
-	cfg.TwilioAccountSID = os.Getenv("TWILIO_ACCOUNT_SID")
-	cfg.TwilioApiKey = os.Getenv("TWILIO_API_KEY")
-	cfg.TwilioApiSecret = os.Getenv("TWILIO_API_SECRET")
+	// Lookup PORT and validate it
+	if port, ok := os.LookupEnv("PORT"); ok {
+		if portInt, err := strconv.Atoi(port); err == nil && portInt > 0 && portInt <= 65535 {
+			cfg.Port = port
+		} else {
+			return nil, fmt.Errorf("invalid PORT value: %s", port)
+		}
+	}
 
-	// Load command line flags (will override environment variables/defaults)
-	flag.IntVar(&cfg.Port, "port", cfg.Port, "Port on which the server will listen")
-	flag.StringVar(&cfg.TwilioAccountSID, "twilio_account_sid", cfg.TwilioAccountSID, "Twilio Account SID")
-	flag.StringVar(&cfg.TwilioApiKey, "twilio_api_key", cfg.TwilioApiKey, "Twilio API Key")
-	flag.StringVar(&cfg.TwilioApiSecret, "twilio_api_secret", cfg.TwilioApiSecret, "Twilio API Secret")
+	// Lookup TWILIO_ACCOUNT_SID
+	if accountSid, ok := os.LookupEnv("TWILIO_ACCOUNT_SID"); ok {
+		cfg.TwilioAccountSID = accountSid
+	} else {
+		return nil, fmt.Errorf("TWILIO_ACCOUNT_SID not set")
+	}
 
-	flag.Parse()
+	// Lookup TWILIO_API_KEY
+	if apiKey, ok := os.LookupEnv("TWILIO_API_KEY"); ok {
+		cfg.TwilioApiKey = apiKey
+	} else {
+		return nil, fmt.Errorf("TWILIO_API_KEY not set")
+	}
+
+	// Lookup TWILIO_API_SECRET
+	if apiSecret, ok := os.LookupEnv("TWILIO_API_SECRET"); ok {
+		cfg.TwilioApiSecret = apiSecret
+	} else {
+		return nil, fmt.Errorf("TWILIO_API_SECRET not set")
+	}
 
 	return cfg, nil
 }
