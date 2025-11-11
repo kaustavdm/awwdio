@@ -33,3 +33,9 @@ go.work.sum
 .vscode/
 *.swp
 *~
+*.bak
+
+# Svelte ignores
+.svelte-kit/
+node_modules/
+web/build/

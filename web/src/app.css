@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	:root {
+		/* Twilio Paste Light Mode Colors */
+		--background: #FFFFFF;
+		--background-secondary: #F4F4F6;
+		--foreground: #121C2D;
+		--foreground-secondary: #3A3C3D;
+		--primary: #0263E0;
+		--primary-hover: #0249C0;
+		--border: #E8EAEA;
+	}
+
+	.dark {
+		/* Twilio Paste Dark Mode Colors */
+		--background: #121C2D;
+		--background-secondary: #1A1C1D;
+		--foreground: #FFFFFF;
+		--foreground-secondary: #C4C7C7;
+		--primary: #6899E8;
+		--primary-hover: #E1EFFE;
+		--border: #3A3C3D;
+	}
+}
+
+@layer base {
+	body {
+		@apply bg-twilio-gray-0 dark:bg-twilio-gray-100 text-twilio-gray-100 dark:text-twilio-gray-0;
+	}
+}

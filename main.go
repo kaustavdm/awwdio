@@ -12,8 +12,11 @@ import (
 	"github.com/kaustavdm/awwdio/internal/api"
 )
 
+//go:embed web/build/*
+var buildFS embed.FS
+
 //go:embed web/static/*
-var static embed.FS
+var staticFS embed.FS
 
 // init is run before main(), so it is the ideal place to set up logging
 // Note that we do not need to call init() in main() as it is automatically called by Go
@@ -66,20 +69,24 @@ func main() {
 	apiServer.Register(apiMux)
 	mux.Handle("/api/", http.StripPrefix("/api", apiMux))
 
-	// 3. Serve static files from the "web/static" directory
-	// 3.a. Create sub filesystem for static files
-	staticFs, err := fs.Sub(static, "web/static")
+	// 3. Serve static files from the "web/build" directory (SvelteKit build output)
+	// 3.a. Create sub filesystem for build files
+	buildFs, err := fs.Sub(buildFS, "web/build")
 	if err != nil {
-		slog.Error("Failed to create sub filesystem for static files", slog.String("directory", "web/static"), slog.String("error", err.Error()))
+		slog.Error("Failed to create sub filesystem for build files", slog.String("directory", "web/build"), slog.String("error", err.Error()))
 		return
 	}
-	// 3.b. Create file server handler
-	fileServer := http.FileServer(http.FS(staticFs))
-	mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
+	// 3.b. Create file server handler for build assets
+	buildFileServer := http.FileServer(http.FS(buildFs))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", buildFileServer))
 
-	// 3.c. Serve favicon and robots.txt from root
+	// 3.b.1. Serve SvelteKit's _app directory (contains JS, CSS, and other assets)
+	mux.Handle("GET /_app/", buildFileServer)
+
+	// 3.c. Serve specific files from web/static/ at root level
+	// These are served directly at root (e.g., /favicon.ico, /robots.txt)
 	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		data, err := static.ReadFile("web/static/favicon.ico")
+		data, err := staticFS.ReadFile("web/static/favicon.ico")
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -89,12 +96,27 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /robots.txt", func(w http.ResponseWriter, r *http.Request) {
-		data, err := static.ReadFile("web/static/robots.txt")
+		data, err := staticFS.ReadFile("web/static/robots.txt")
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write(data)
+	})
+
+	// 3.e. Serve SPA (Single Page Application) - catch-all route for client-side routing
+	// This must be last so it doesn't override other routes
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Serve index.html for all routes not matched above
+		// This enables client-side routing in SvelteKit
+		data, err := buildFS.ReadFile("web/build/index.html")
+		if err != nil {
+			http.Error(w, "Frontend not found", http.StatusNotFound)
+			slog.Error("Failed to read index.html", slog.String("error", err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(data)
 	})
 
