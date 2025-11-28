@@ -3,10 +3,12 @@
 	import { page } from '$app/stores';
 	import { authStore } from '$lib/stores/auth';
 
-	let step = $state<'email' | 'otp' | 'displayName'>('email');
-	let email = $state('');
+	let step = $state<'contact' | 'otp' | 'displayName'>('contact');
+	let channel = $state<'email' | 'sms'>('email');
+	let contact = $state('');
 	let otp = $state('');
 	let displayName = $state('');
+	let token = $state('');
 	let error = $state('');
 	let loading = $state(false);
 
@@ -17,20 +19,27 @@
 	});
 
 	async function sendOTP() {
-		if (!email || !email.includes('@')) {
-			error = 'Please enter a valid email address';
-			return;
+		// Validate input based on channel
+		if (channel === 'email') {
+			if (!contact || !contact.includes('@')) {
+				error = 'Please enter a valid email address';
+				return;
+			}
+		} else if (channel === 'sms') {
+			if (!contact || contact.length < 10) {
+				error = 'Please enter a valid phone number';
+				return;
+			}
 		}
 
 		loading = true;
 		error = '';
 
 		try {
-			// TODO: Call API to send OTP via Twilio Verify
 			const response = await fetch('/api/auth/send-otp', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ email })
+				body: JSON.stringify({ channel, to: contact })
 			});
 
 			if (!response.ok) {
@@ -56,16 +65,18 @@
 		error = '';
 
 		try {
-			// TODO: Call API to verify OTP
 			const response = await fetch('/api/auth/verify-otp', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ email, otp })
+				body: JSON.stringify({ channel, to: contact, otp })
 			});
 
 			if (!response.ok) {
 				throw new Error('Invalid verification code');
 			}
+
+			const data = await response.json();
+			token = data.token;
 
 			step = 'displayName';
 		} catch (e) {
@@ -79,8 +90,10 @@
 	function completeLogin() {
 		// Save user to auth store
 		authStore.login({
-			email,
-			displayName: displayName || undefined
+			channel,
+			contact,
+			displayName: displayName || undefined,
+			token
 		});
 
 		// Redirect based on intent
@@ -111,17 +124,58 @@
 				</div>
 			{/if}
 
-			{#if step === 'email'}
+			{#if step === 'contact'}
 				<form onsubmit={(e) => { e.preventDefault(); sendOTP(); }}>
-					<label class="block mb-2 text-sm font-medium" for="email">Email Address</label>
-					<input
-						id="email"
-						type="email"
-						bind:value={email}
-						placeholder="your@email.com"
-						class="w-full px-4 py-3 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 bg-twilio-gray-0 dark:bg-twilio-gray-80 text-twilio-gray-100 dark:text-twilio-gray-0 focus:outline-none focus:ring-2 focus:ring-twilio-blue-60 mb-4"
-						required
-					/>
+					<!-- Channel Selection -->
+					<div class="mb-4">
+						<label class="block mb-2 text-sm font-medium">Verification Method</label>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								onclick={() => { channel = 'email'; contact = ''; error = ''; }}
+								class="flex-1 py-2 px-4 rounded-lg border transition-colors {channel === 'email'
+									? 'bg-twilio-blue-60 text-white border-twilio-blue-60'
+									: 'bg-twilio-gray-0 dark:bg-twilio-gray-80 text-twilio-gray-100 dark:text-twilio-gray-0 border-twilio-gray-30 dark:border-twilio-gray-70 hover:border-twilio-blue-60'}"
+							>
+								Email
+							</button>
+							<button
+								type="button"
+								onclick={() => { channel = 'sms'; contact = ''; error = ''; }}
+								class="flex-1 py-2 px-4 rounded-lg border transition-colors {channel === 'sms'
+									? 'bg-twilio-blue-60 text-white border-twilio-blue-60'
+									: 'bg-twilio-gray-0 dark:bg-twilio-gray-80 text-twilio-gray-100 dark:text-twilio-gray-0 border-twilio-gray-30 dark:border-twilio-gray-70 hover:border-twilio-blue-60'}"
+							>
+								SMS
+							</button>
+						</div>
+					</div>
+
+					<!-- Contact Input -->
+					{#if channel === 'email'}
+						<label class="block mb-2 text-sm font-medium" for="contact">Email Address</label>
+						<input
+							id="contact"
+							type="email"
+							bind:value={contact}
+							placeholder="your@email.com"
+							class="w-full px-4 py-3 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 bg-twilio-gray-0 dark:bg-twilio-gray-80 text-twilio-gray-100 dark:text-twilio-gray-0 focus:outline-none focus:ring-2 focus:ring-twilio-blue-60 mb-4"
+							required
+						/>
+					{:else}
+						<label class="block mb-2 text-sm font-medium" for="contact">Phone Number</label>
+						<input
+							id="contact"
+							type="tel"
+							bind:value={contact}
+							placeholder="+1234567890"
+							class="w-full px-4 py-3 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 bg-twilio-gray-0 dark:bg-twilio-gray-80 text-twilio-gray-100 dark:text-twilio-gray-0 focus:outline-none focus:ring-2 focus:ring-twilio-blue-60 mb-4"
+							required
+						/>
+						<p class="text-xs text-twilio-gray-60 dark:text-twilio-gray-40 mb-4">
+							Include country code (e.g., +1 for US)
+						</p>
+					{/if}
 
 					<button
 						type="submit"
@@ -134,7 +188,7 @@
 			{:else if step === 'otp'}
 				<div class="mb-4">
 					<p class="text-sm text-twilio-gray-60 dark:text-twilio-gray-40">
-						We've sent a verification code to <strong class="text-twilio-gray-100 dark:text-twilio-gray-0">{email}</strong>
+						We've sent a verification code {channel === 'email' ? 'to' : 'via SMS to'} <strong class="text-twilio-gray-100 dark:text-twilio-gray-0">{contact}</strong>
 					</p>
 				</div>
 
@@ -160,16 +214,16 @@
 
 					<button
 						type="button"
-						onclick={() => { step = 'email'; otp = ''; error = ''; }}
+						onclick={() => { step = 'contact'; otp = ''; error = ''; }}
 						class="w-full py-2 text-sm text-twilio-gray-60 dark:text-twilio-gray-40 hover:text-twilio-gray-100 dark:hover:text-twilio-gray-0"
 					>
-						Use a different email
+						Use a different {channel === 'email' ? 'email' : 'phone number'}
 					</button>
 				</form>
 			{:else if step === 'displayName'}
 				<div class="mb-4">
 					<p class="text-sm text-twilio-green-60 dark:text-twilio-green-30 mb-4">
-						Email verified successfully!
+						Verification successful!
 					</p>
 				</div>
 

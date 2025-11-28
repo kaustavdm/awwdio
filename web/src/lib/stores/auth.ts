@@ -2,8 +2,10 @@ import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
 
 export interface User {
-	email: string;
+	channel: 'email' | 'sms';
+	contact: string; // Email address or phone number
 	displayName?: string;
+	token?: string;
 }
 
 function createAuthStore() {
@@ -27,12 +29,17 @@ function createAuthStore() {
 			set(user);
 			if (browser) {
 				localStorage.setItem('user', JSON.stringify(user));
+				// Store token separately for easier access
+				if (user.token) {
+					localStorage.setItem('token', user.token);
+				}
 			}
 		},
 		logout: () => {
 			set(null);
 			if (browser) {
 				localStorage.removeItem('user');
+				localStorage.removeItem('token');
 			}
 		},
 		updateDisplayName: (displayName: string) => {

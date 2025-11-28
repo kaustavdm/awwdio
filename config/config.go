@@ -15,6 +15,8 @@ type Config struct {
 	TwilioApiKey string
 	// Twilio API Secret
 	TwilioApiSecret string
+	// Twilio Verify Service SID
+	TwilioVerifyServiceSID string
 }
 
 // LoadConfig loads the configuration from environment variables
@@ -51,6 +53,13 @@ func LoadConfig() (*Config, error) {
 		cfg.TwilioApiSecret = apiSecret
 	} else {
 		return nil, fmt.Errorf("TWILIO_API_SECRET not set")
+	}
+
+	// Lookup TWILIO_VERIFY_SERVICE_SID
+	if verifyServiceSid, ok := os.LookupEnv("TWILIO_VERIFY_SERVICE_SID"); ok {
+		cfg.TwilioVerifyServiceSID = verifyServiceSid
+	} else {
+		return nil, fmt.Errorf("TWILIO_VERIFY_SERVICE_SID not set")
 	}
 
 	return cfg, nil

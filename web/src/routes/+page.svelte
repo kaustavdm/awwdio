@@ -64,7 +64,7 @@
 	{#if user}
 		<div class="mt-8 text-center">
 			<p class="text-sm text-twilio-gray-60 dark:text-twilio-gray-40">
-				Logged in as <span class="font-semibold text-twilio-gray-100 dark:text-twilio-gray-0">{user.displayName || user.email}</span>
+				Logged in as <span class="font-semibold text-twilio-gray-100 dark:text-twilio-gray-0">{user.displayName || user.contact}</span>
 			</p>
 			<button
 				onclick={() => authStore.logout()}
