@@ -87,11 +87,12 @@ class AuthStore {
 
 ### Implemented Endpoints
 
-**POST /api/video/token** (`internal/api/video/access_token.go:17-63`)
+**POST /api/video/token** (`internal/api/video/access_token.go`)
 - Generates Twilio JWT for Video SDK
-- Request: `{ "identity": "string", "room": "string" }`
-- Response: `{ "token": "jwt_token_string" }`
-- Issues: Hardcoded to `user_1` and `demo_room` (line 35-36)
+- Requires: `Authorization: Bearer <jwt_token>` header
+- Request: `{ "room": "room_name" }`
+- Response: `{ "token": "twilio_jwt_token_string" }`
+- User identity extracted from authenticated JWT
 
 **GET /api/video/room** (`internal/api/video/room.go:16-64`)
 - Fetches room details from Twilio
@@ -104,11 +105,12 @@ class AuthStore {
 - Response: `{ "success": true }`
 - Requires: `TWILIO_VERIFY_SERVICE_SID` env var
 
-**POST /api/auth/verify-otp** (`internal/api/auth/auth.go:109-151`)
-- Verifies OTP code
-- Request: `{ "email": "user@example.com", "otp": "123456" }`
-- Response: `{ "success": true, "token": "placeholder_token" }`
-- TODO: Returns placeholder token, needs proper session management (line 146)
+**POST /api/auth/verify-otp** (`internal/api/auth/auth.go`)
+- Verifies OTP code and returns JWT
+- Request: `{ "channel": "email", "to": "user@example.com", "otp": "123456" }`
+- Response: `{ "success": true, "token": "jwt_token" }`
+- JWT contains: sub (user email), iat, exp (24h expiry)
+- Signed with HS256 using JWT_SECRET
 
 ### Pending API Features
 
@@ -198,22 +200,24 @@ proxy: {
 - CORS headers not configured
 - No rate limiting
 - No request size limits
-- Session tokens are placeholders
 - No CSRF protection
-- Missing authentication middleware
+
+### Implemented Security Features
+- JWT authentication with HS256 signing (`internal/api/auth/jwt.go`)
+- Auth middleware for protected routes (`internal/api/middleware/auth.go`)
+- Token expiration (24 hours)
+- Required JWT_SECRET environment variable
 
 ### Recommendations
-1. Implement proper JWT with expiry
-2. Add rate limiting middleware
-3. Configure CORS for production domain
-4. Add request size limits
-5. Implement CSRF tokens for state-changing operations
+1. Add rate limiting middleware
+2. Configure CORS for production domain
+3. Add request size limits
+4. Implement CSRF tokens for state-changing operations
 
 ## Known Issues & TODOs
 
 ### Critical
-- **Session Management**: verify-otp returns placeholder token (`internal/api/auth/auth.go:146`)
-- **Identity Hardcoded**: Video tokens use hardcoded `user_1` (`internal/api/video/access_token.go:35-36`)
+- None currently
 
 ### Important
 - No room creation API
@@ -289,6 +293,7 @@ const response = await fetch('/api/endpoint', {
 - `TWILIO_API_KEY`: API key SID (starts with SK)
 - `TWILIO_API_SECRET`: API key secret
 - `TWILIO_VERIFY_SERVICE_SID`: Verify service for OTP
+- `JWT_SECRET`: Secret key for signing JWT tokens (min 32 chars recommended)
 
 ### Optional Environment Variables
 - `PORT`: Server port (default: 8080, validated 1-65535)
