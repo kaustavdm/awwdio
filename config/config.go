@@ -17,6 +17,8 @@ type Config struct {
 	TwilioApiSecret string
 	// Twilio Verify Service SID
 	TwilioVerifyServiceSID string
+	// JWT Secret for signing authentication tokens
+	JWTSecret string
 }
 
 // LoadConfig loads the configuration from environment variables
@@ -60,6 +62,13 @@ func LoadConfig() (*Config, error) {
 		cfg.TwilioVerifyServiceSID = verifyServiceSid
 	} else {
 		return nil, fmt.Errorf("TWILIO_VERIFY_SERVICE_SID not set")
+	}
+
+	// Lookup JWT_SECRET (required for authentication)
+	if jwtSecret, ok := os.LookupEnv("JWT_SECRET"); ok {
+		cfg.JWTSecret = jwtSecret
+	} else {
+		return nil, fmt.Errorf("JWT_SECRET not set")
 	}
 
 	return cfg, nil
