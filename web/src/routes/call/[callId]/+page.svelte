@@ -3,6 +3,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/auth';
+	import { apiPost } from '$lib/api';
 	import type { Room, LocalParticipant, RemoteParticipant, RemoteTrack } from 'twilio-video';
 
 	let callId = $state('');
@@ -38,21 +39,16 @@
 		error = '';
 
 		try {
-			// Get access token from API
-			const response = await fetch('/api/video/token', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					room: callId,
-					identity: user?.displayName || user?.email || 'Anonymous'
-				})
+			// Get access token from API (uses authenticated fetch)
+			const response = await apiPost<{ token: string }>('/api/video/token', {
+				room: callId
 			});
 
-			if (!response.ok) {
-				throw new Error('Failed to get access token');
+			if (response.error || !response.data) {
+				throw new Error(response.error || 'Failed to get access token');
 			}
 
-			const data = await response.json();
+			const data = response.data;
 
 			// Import Twilio Video dynamically
 			const Video = await import('twilio-video');

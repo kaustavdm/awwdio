@@ -53,6 +53,12 @@ function createAuthStore() {
 				}
 				return user;
 			});
+		},
+		getToken: (): string | null => {
+			if (browser) {
+				return localStorage.getItem('token');
+			}
+			return null;
 		}
 	};
 }
