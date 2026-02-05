@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**IMPORTANT**: Before starting any work, read LEARNINGS.md for detailed technical implementation patterns, API specifications, and discovered conventions. Update LEARNINGS.md with new findings as you work.
+
 ## Project Overview
 
 Awwdio is a lightweight fullstack audio and video conversation application built with Go and Svelte/SvelteKit, leveraging Twilio's Programmable Video API.
@@ -63,58 +65,16 @@ source .env
 
 ## Architecture
 
-### Fullstack Structure
+**Fullstack**: Single Go binary with embedded SvelteKit frontend. Frontend in `web/`, build output in `web/build/` (embedded), static assets in `web/static/` served at root.
 
-**Backend (Go)**:
-- Standard library-first approach (minimal external dependencies)
-- HTTP server with nested mux routing
-- Embedded filesystem for serving compiled frontend assets
+**Backend Structure**:
+- `main.go`: HTTP server with three-tier nested mux routing, slog logging, embed.FS for frontend
+- `config/config.go`: Environment variable loading and validation
+- `internal/api/`: Modular API with Handler struct + Register() pattern
+- `internal/api/video/`: Twilio token generation and room management
+- `internal/api/auth/`: OTP authentication via Twilio Verify
 
-**Frontend (Svelte/SvelteKit)**:
-- Lives in `web/` directory
-- Build output goes to `web/build/` for embedding (gitignored)
-- Static assets in `web/static/` are served at root level (e.g., favicon.ico, robots.txt)
-- Communicates with backend via `/api/*` endpoints
-- Uses TailwindCSS with dark/light mode support
-- Integrates Twilio Video JS SDK for WebRTC
-
-**Build & Deployment**:
-- Frontend compiled to static assets
-- Assets embedded into Go binary using `embed.FS`
-- Single executable contains both frontend and backend
-
-### Core Backend Components
-
-1. **Main Application** (`main.go`):
-   - Sets up HTTP server with routing
-   - Configures logging (text or JSON format, with debug mode)
-   - Embeds and serves frontend static files
-   - Route structure:
-     - `/api/*` → API endpoints
-     - `/static/*` → Static assets
-     - `/favicon.ico`, `/robots.txt` → Root-level resources
-
-2. **Configuration** (`config/config.go`):
-   - Loads environment variables into configuration struct
-   - Provides validation for required settings
-   - No external config file dependencies
-
-3. **API Layer** (`internal/api/`):
-   - Modular API structure with route registration
-   - Video API module with Twilio integration
-   - Uses nested mux instances for clean route organization
-
-4. **Video Module** (`internal/api/video/`):
-   - Handles Twilio access token generation (`access_token.go`)
-   - Manages room creation and access (`video.go`, `room.go`)
-   - Integrates with Twilio REST client
-
-### Request Flow
-
-1. Client makes request to server
-2. Request is routed to appropriate handler in API module
-3. Handler processes request, potentially communicating with Twilio
-4. Response is returned to client with token or room information
+**Request Flow**: Client → Nested mux routing → Handler → Twilio API → JSON response
 
 ## Development Principles
 
@@ -212,33 +172,10 @@ Response 4: Add remaining functions and exports
 
 This approach ensures all work is completed even with output token constraints.
 
-### Pending Backend Implementation
+### Implementation Guidelines
 
-The following API endpoints are referenced by the frontend but not yet implemented:
-
-1. **Authentication Endpoints** (Twilio Verify integration needed):
-   - `POST /api/auth/send-otp` - Send OTP to email via Twilio Verify
-     - Request: `{ "email": "user@example.com" }`
-     - Response: `{ "success": true }`
-   - `POST /api/auth/verify-otp` - Verify OTP code
-     - Request: `{ "email": "user@example.com", "otp": "123456" }`
-     - Response: `{ "success": true, "token": "session_token" }`
-
-2. **Room Management**:
-   - Create new rooms/calls (currently using client-side UUID generation)
-   - List active rooms
-   - Room metadata and participant tracking
-
-3. **Phone Integration** (Future):
-   - `POST /api/call/phone` - Initiate phone call to join room
-     - Twilio Voice API integration
-     - SIP/PSTN bridge to video room
-
-**Implementation Notes:**
-- Follow the existing pattern in `internal/api/video/` for new modules
-- Create an `internal/api/auth/` module for authentication endpoints
-- Use Go's standard library for HTTP handling
-- Add proper error handling and validation
-- Consider session management for authenticated users
-- Do not add emojis
-- Add code comments for complex logic
+- Follow Handler struct + Register() pattern from `internal/api/video/`
+- Use standard library for HTTP handling, slog for logging
+- Early return error handling with clear messages
+- No emojis in code or comments
+- See LEARNINGS.md for API specifications and pending features
