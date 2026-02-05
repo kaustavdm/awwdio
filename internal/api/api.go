@@ -5,6 +5,7 @@ import (
 
 	"github.com/kaustavdm/awwdio/config"
 	"github.com/kaustavdm/awwdio/internal/api/auth"
+	"github.com/kaustavdm/awwdio/internal/api/middleware"
 	"github.com/kaustavdm/awwdio/internal/api/video"
 )
 
@@ -32,8 +33,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.authHandler.Register(authMux)
 	mux.Handle("/auth/", http.StripPrefix("/auth", authMux))
 
-	// Register video mux
+	// Register video mux with auth middleware
 	videoMux := http.NewServeMux()
 	a.videoHandler.Register(videoMux)
-	mux.Handle("/video/", http.StripPrefix("/video", videoMux))
+	authMiddleware := middleware.RequireAuth(a.config.JWTSecret)
+	mux.Handle("/video/", http.StripPrefix("/video", authMiddleware(videoMux)))
 }
