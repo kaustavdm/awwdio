@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/kaustavdm/awwdio/config"
 	"github.com/twilio/twilio-go"
@@ -146,9 +147,14 @@ func (h *Handler) verifyOTPHandler(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("OTP verified", "channel", req.Channel, "to", req.To)
 
-	// TODO: Generate and return a proper session token
-	// For now, returning a placeholder token
-	sessionToken := "session_" + req.To
+	// Generate JWT token with 24 hour expiry
+	sessionToken, err := GenerateJWT(req.To, h.config.JWTSecret, 24*time.Hour)
+	if err != nil {
+		slog.Error("Failed to generate JWT", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to generate session token"})
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(VerifyOTPResponse{
