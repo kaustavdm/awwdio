@@ -39,3 +39,6 @@ go.work.sum
 .svelte-kit/
 node_modules/
 web/build/
+# Docs and specs
+docs/
+LEARNINGS.md
