@@ -58,6 +58,8 @@ type ErrorResponse struct {
 
 // sendOTPHandler sends an OTP via email or SMS using Twilio Verify
 func (h *Handler) sendOTPHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	var req SendOTPRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -96,12 +98,13 @@ func (h *Handler) sendOTPHandler(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("OTP sent", "channel", req.Channel, "to", req.To, "status", *resp.Status)
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SendOTPResponse{Success: true})
 }
 
 // verifyOTPHandler verifies the OTP code via email or SMS
 func (h *Handler) verifyOTPHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	var req VerifyOTPRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -156,7 +159,6 @@ func (h *Handler) verifyOTPHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(VerifyOTPResponse{
 		Success: true,
 		Token:   sessionToken,
