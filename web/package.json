@@ -26,6 +26,7 @@
 	},
 	"type": "module",
 	"dependencies": {
+		"twilio-sync": "^4.0.0",
 		"twilio-video": "^2.29.0"
 	}
 }
