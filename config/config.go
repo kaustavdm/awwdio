@@ -15,8 +15,18 @@ type Config struct {
 	TwilioApiKey string
 	// Twilio API Secret
 	TwilioApiSecret string
+	// Twilio Auth Token (for webhook signature validation and Sync)
+	TwilioAuthToken string
 	// Twilio Verify Service SID
 	TwilioVerifyServiceSID string
+	// Twilio Phone Number (for outbound PSTN calls)
+	TwilioPhoneNumber string
+	// Twilio Intelligence Service SID (for post-call analysis)
+	TwilioIntelligenceServiceSID string
+	// Twilio Sync Service SID (for pipeline state management)
+	TwilioSyncServiceSID string
+	// Base URL for webhook callbacks (e.g., https://abc.ngrok.io)
+	BaseURL string
 	// JWT Secret for signing authentication tokens
 	JWTSecret string
 }
@@ -70,6 +80,17 @@ func LoadConfig() (*Config, error) {
 	} else {
 		return nil, fmt.Errorf("JWT_SECRET not set")
 	}
+
+	// Optional: Voice calling and webhook support
+	cfg.TwilioAuthToken, _ = os.LookupEnv("TWILIO_AUTH_TOKEN")
+	cfg.TwilioPhoneNumber, _ = os.LookupEnv("TWILIO_PHONE_NUMBER")
+	cfg.BaseURL, _ = os.LookupEnv("BASE_URL")
+
+	// Optional: Conversational Intelligence
+	cfg.TwilioIntelligenceServiceSID, _ = os.LookupEnv("TWILIO_INTELLIGENCE_SERVICE_SID")
+
+	// Optional: Twilio Sync
+	cfg.TwilioSyncServiceSID, _ = os.LookupEnv("TWILIO_SYNC_SERVICE_SID")
 
 	return cfg, nil
 }
