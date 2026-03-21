@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/auth';
+	import { apiPost } from '$lib/api';
 
 	let user = $state<any>(null);
 
@@ -10,16 +11,21 @@
 
 	async function startCall() {
 		if (!user) {
-			// Redirect to login with a flag to create call after login
 			goto('/login?intent=create-call');
 			return;
 		}
 
-		// Create a new call and redirect to setup
 		try {
-			// TODO: Call API to create a new call
-			const callId = crypto.randomUUID(); // Temporary - will be replaced with API call
-			goto(`/call/${callId}/setup`);
+			const roomName = crypto.randomUUID();
+			const response = await apiPost<{ sid: string; name: string }>('/api/video/room', {
+				name: roomName
+			});
+
+			if (response.error || !response.data) {
+				throw new Error(response.error || 'Failed to create room');
+			}
+
+			goto(`/call/${response.data.name}/setup`);
 		} catch (error) {
 			console.error('Failed to create call:', error);
 		}

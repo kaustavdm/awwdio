@@ -2,42 +2,62 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
+	import { apiPost } from '$lib/api';
+	import { authStore } from '$lib/stores/auth';
 
 	let callId = $state('');
-	let joinMethod = $state<'web' | 'phone' | null>(null);
-	let videoEnabled = $state(false);
-	let phoneNumber = $state('');
+	let user = $state<any>(null);
+	let displayName = $state('');
+	let email = $state('');
+	let useHeadphones = $state(true);
+	let videoEnabled = $state(true);
 
 	let audioDevices = $state<MediaDeviceInfo[]>([]);
 	let videoDevices = $state<MediaDeviceInfo[]>([]);
+	let outputDevices = $state<MediaDeviceInfo[]>([]);
 	let selectedAudioDevice = $state<string>('');
 	let selectedVideoDevice = $state<string>('');
+	let selectedOutputDevice = $state<string>('');
 
 	let localStream: MediaStream | null = null;
 	let videoElement: HTMLVideoElement | null = null;
 	let audioLevel = $state(0);
+	let videoResolution = $state('');
 	let audioContext: AudioContext | null = null;
 	let analyser: AnalyserNode | null = null;
 	let animationFrameId: number | null = null;
 
 	$effect(() => {
-		callId = $page.params.callId;
+		callId = $page.params.callId ?? '';
 	});
 
-	onMount(async () => {
-		// Enumerate devices
-		try {
-			await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-			const devices = await navigator.mediaDevices.enumerateDevices();
-			audioDevices = devices.filter(d => d.kind === 'audioinput');
-			videoDevices = devices.filter(d => d.kind === 'videoinput');
+	authStore.subscribe((value) => {
+		user = value;
+		if (value?.displayName) {
+			displayName = value.displayName;
+		} else if (value?.contact) {
+			displayName = value.contact.split('@')[0];
+		}
+	});
 
-			if (audioDevices.length > 0) {
-				selectedAudioDevice = audioDevices[0].deviceId;
+	let isGuest = $derived(!user);
+
+	onMount(async () => {
+		try {
+			await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+			const devices = await navigator.mediaDevices.enumerateDevices();
+			audioDevices = devices.filter((d) => d.kind === 'audioinput');
+			videoDevices = devices.filter((d) => d.kind === 'videoinput');
+			outputDevices = devices.filter((d) => d.kind === 'audiooutput');
+
+			if (audioDevices.length > 0) selectedAudioDevice = audioDevices[0].deviceId;
+			if (videoDevices.length > 0) selectedVideoDevice = videoDevices[0].deviceId;
+			if (outputDevices.length > 0) {
+				selectedOutputDevice =
+					localStorage.getItem('awwdio-output-device') || outputDevices[0].deviceId;
 			}
-			if (videoDevices.length > 0) {
-				selectedVideoDevice = videoDevices[0].deviceId;
-			}
+
+			await startMediaStream();
 		} catch (error) {
 			console.error('Error accessing media devices:', error);
 		}
@@ -49,18 +69,34 @@
 
 	async function startMediaStream() {
 		try {
+			const echoCancellation = !useHeadphones;
 			const constraints: MediaStreamConstraints = {
-				audio: selectedAudioDevice ? { deviceId: selectedAudioDevice } : true,
-				video: videoEnabled && selectedVideoDevice ? { deviceId: selectedVideoDevice } : false
+				audio: selectedAudioDevice
+					? { deviceId: { exact: selectedAudioDevice }, echoCancellation }
+					: { echoCancellation },
+				video:
+					videoEnabled && selectedVideoDevice
+						? { deviceId: { exact: selectedVideoDevice } }
+						: videoEnabled
+							? true
+							: false
 			};
 
 			localStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-			if (videoEnabled && videoElement) {
+			if (videoElement && localStream) {
 				videoElement.srcObject = localStream;
+				const videoTrack = localStream.getVideoTracks()[0];
+				if (videoTrack) {
+					videoElement.onloadedmetadata = () => {
+						const settings = videoTrack.getSettings();
+						const fps = Math.round(settings.frameRate ?? 0);
+						const height = settings.height ?? 0;
+						videoResolution = height > 0 ? `${height}p / ${fps}fps` : '';
+					};
+				}
 			}
 
-			// Setup audio level monitoring
 			setupAudioMonitoring();
 		} catch (error) {
 			console.error('Error accessing media:', error);
@@ -69,7 +105,7 @@
 
 	function stopMediaStream() {
 		if (localStream) {
-			localStream.getTracks().forEach(track => track.stop());
+			localStream.getTracks().forEach((track) => track.stop());
 			localStream = null;
 		}
 		if (audioContext) {
@@ -96,28 +132,13 @@
 
 		function updateAudioLevel() {
 			if (!analyser) return;
-
 			analyser.getByteFrequencyData(dataArray);
 			const average = dataArray.reduce((a, b) => a + b) / bufferLength;
 			audioLevel = average / 255;
-
 			animationFrameId = requestAnimationFrame(updateAudioLevel);
 		}
 
 		updateAudioLevel();
-	}
-
-	async function selectJoinMethod(method: 'web' | 'phone') {
-		joinMethod = method;
-		if (method === 'web') {
-			await startMediaStream();
-		}
-	}
-
-	async function toggleVideo() {
-		videoEnabled = !videoEnabled;
-		stopMediaStream();
-		await startMediaStream();
 	}
 
 	async function changeAudioDevice() {
@@ -126,20 +147,25 @@
 	}
 
 	async function changeVideoDevice() {
-		if (videoEnabled) {
-			stopMediaStream();
-			await startMediaStream();
-		}
+		stopMediaStream();
+		await startMediaStream();
+	}
+
+	function changeOutputDevice() {
+		localStorage.setItem('awwdio-output-device', selectedOutputDevice);
+	}
+
+	async function setHeadphones(value: boolean) {
+		useHeadphones = value;
+		stopMediaStream();
+		await startMediaStream();
 	}
 
 	function joinCall() {
+		if (displayName && user && !user.displayName) {
+			authStore.updateDisplayName(displayName);
+		}
 		stopMediaStream();
-		goto(`/call/${callId}`);
-	}
-
-	async function submitPhoneNumber() {
-		// TODO: Call API to setup phone call
-		console.log('Setting up phone call for:', phoneNumber);
 		goto(`/call/${callId}`);
 	}
 </script>
@@ -148,163 +174,208 @@
 	<title>Setup Call - Awwdio</title>
 </svelte:head>
 
-<div class="min-h-screen p-4 flex items-center justify-center">
-	<div class="w-full max-w-2xl">
-		<h1 class="text-3xl font-bold text-center mb-8">Setup Your Call</h1>
+<div class="min-h-screen bg-twilio-gray-90 flex items-center justify-center p-8">
+	<div class="w-full max-w-5xl flex gap-12 items-center">
 
-		{#if !joinMethod}
-			<div class="grid md:grid-cols-2 gap-6">
-				<!-- Join on Web -->
+		<!-- Left: Form panel -->
+		<div class="flex-shrink-0 w-80">
+			<!-- Subtitle + heading -->
+			<p class="text-twilio-gray-40 text-sm mb-2">
+				You're about to join the studio
+			</p>
+			<h1 class="text-white text-3xl font-semibold mb-8 leading-tight">
+				Let's check your cam and mic
+			</h1>
+
+			<!-- Name field -->
+			<div class="mb-3">
+				<div class="relative">
+					<input
+						type="text"
+						bind:value={displayName}
+						placeholder="Your name"
+						class="w-full bg-twilio-gray-80 text-white placeholder-twilio-gray-50 rounded-lg px-4 py-3 pr-20 border border-twilio-gray-70 focus:outline-none focus:border-twilio-purple-60 transition-colors text-sm"
+					/>
+					{#if isGuest}
+						<span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-twilio-gray-40 bg-twilio-gray-70 px-2 py-0.5 rounded">
+							Guest
+						</span>
+					{/if}
+				</div>
+			</div>
+
+			<!-- Email field -->
+			<div class="mb-4">
+				<input
+					type="email"
+					bind:value={email}
+					placeholder="Email (optional)"
+					class="w-full bg-twilio-gray-80 text-white placeholder-twilio-gray-50 rounded-lg px-4 py-3 border border-twilio-gray-70 focus:outline-none focus:border-twilio-purple-60 transition-colors text-sm"
+				/>
+			</div>
+
+			<!-- Headphones toggle -->
+			<div class="mb-6 flex gap-2">
 				<button
-					onclick={() => selectJoinMethod('web')}
-					class="p-8 bg-twilio-gray-0 dark:bg-twilio-gray-90 rounded-lg shadow-lg hover:shadow-xl transition-all border-2 border-transparent hover:border-twilio-blue-60"
+					onclick={() => setHeadphones(false)}
+					class="flex-1 py-2.5 px-3 rounded-lg text-sm font-medium transition-all {!useHeadphones
+						? 'bg-twilio-purple-60 text-white'
+						: 'bg-twilio-gray-80 text-twilio-gray-30 border border-twilio-gray-70 hover:border-twilio-gray-50'}"
 				>
-					<div class="flex flex-col items-center">
-						<svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mb-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-						</svg>
-						<h2 class="text-xl font-semibold mb-2">Join on Web</h2>
-						<p class="text-sm text-twilio-gray-60 dark:text-twilio-gray-40 text-center">
-							Use your browser to join with audio and video
-						</p>
-					</div>
+					No headphones
 				</button>
-
-				<!-- Join by Phone -->
 				<button
-					onclick={() => selectJoinMethod('phone')}
-					class="p-8 bg-twilio-gray-0 dark:bg-twilio-gray-90 rounded-lg shadow-lg hover:shadow-xl transition-all border-2 border-transparent hover:border-twilio-blue-60"
+					onclick={() => setHeadphones(true)}
+					class="flex-1 py-2.5 px-3 rounded-lg text-sm font-medium transition-all {useHeadphones
+						? 'bg-twilio-purple-60 text-white'
+						: 'bg-twilio-gray-80 text-twilio-gray-30 border border-twilio-gray-70 hover:border-twilio-gray-50'}"
 				>
-					<div class="flex flex-col items-center">
-						<svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mb-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-						</svg>
-						<h2 class="text-xl font-semibold mb-2">Join by Phone</h2>
-						<p class="text-sm text-twilio-gray-60 dark:text-twilio-gray-40 text-center">
-							Dial in with your phone for audio only
-						</p>
-					</div>
+					Using headphones
 				</button>
 			</div>
-		{:else if joinMethod === 'web'}
-			<div class="bg-twilio-gray-0 dark:bg-twilio-gray-90 rounded-lg shadow-xl p-8">
-				<!-- Video preview -->
+
+			<!-- Join button -->
+			<button
+				onclick={joinCall}
+				class="w-full py-3.5 rounded-lg font-semibold text-white text-sm transition-opacity hover:opacity-90"
+				style="background: linear-gradient(135deg, #8957CF 0%, #6A3FB2 100%);"
+			>
+				Join studio
+			</button>
+
+			<!-- Guest footer -->
+			{#if isGuest}
+				<p class="mt-4 text-twilio-gray-50 text-xs text-center">
+					You are joining as a guest, are you the host?
+					<a href="/login" class="text-white font-medium hover:text-twilio-purple-30 transition-colors">
+						Log in
+					</a>
+				</p>
+			{/if}
+		</div>
+
+		<!-- Right: Video preview + device selectors -->
+		<div class="flex-1 min-w-0">
+			<!-- Video preview -->
+			<div class="relative rounded-xl overflow-hidden bg-twilio-gray-100 mb-3" style="aspect-ratio: 16/9;">
 				{#if videoEnabled}
-					<div class="mb-6">
-						<video
-							bind:this={videoElement}
-							autoplay
-							muted
-							playsinline
-							class="w-full rounded-lg bg-gray-900"
-						></video>
+					<video
+						bind:this={videoElement}
+						autoplay
+						muted
+						playsinline
+						class="w-full h-full object-cover"
+					></video>
+				{:else}
+					<div class="w-full h-full flex items-center justify-center">
+						<div class="w-20 h-20 rounded-full bg-twilio-gray-80 flex items-center justify-center">
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-9 h-9 text-twilio-gray-50" viewBox="0 0 24 24" fill="currentColor">
+								<path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+							</svg>
+						</div>
 					</div>
 				{/if}
 
-				<!-- Audio level meter -->
-				<div class="mb-6">
-					<label class="block text-sm font-medium mb-2">Audio Level</label>
-					<div class="w-full h-4 bg-twilio-gray-20 dark:bg-twilio-gray-80 rounded-full overflow-hidden">
+				<!-- Resolution badge -->
+				{#if videoResolution}
+					<div class="absolute top-3 left-3 bg-black/50 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-md font-medium">
+						{videoResolution}
+					</div>
+				{/if}
+
+				<!-- Bottom overlay: audio meter + track icons -->
+				<div class="absolute bottom-3 right-3 flex items-center gap-2">
+					<!-- Audio level indicator rings around mic icon -->
+					<div class="relative flex items-center justify-center">
+						<!-- Audio ring: scales with audioLevel -->
 						<div
-							class="h-full bg-gradient-to-r from-green-500 to-green-600 transition-all duration-75"
-							style="width: {audioLevel * 100}%"
+							class="absolute rounded-full bg-white/20 transition-all duration-75"
+							style="width: {28 + audioLevel * 20}px; height: {28 + audioLevel * 20}px;"
 						></div>
+						<div class="relative z-10 w-7 h-7 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center">
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="currentColor">
+								<path d="M12 1a4 4 0 014 4v6a4 4 0 01-8 0V5a4 4 0 014-4zm-7 10a7 7 0 0014 0h2a9 9 0 01-8 8.94V22h-2v-2.06A9 9 0 013 11H5z"/>
+							</svg>
+						</div>
+					</div>
+
+					<!-- Camera icon -->
+					<div class="w-7 h-7 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center">
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="currentColor">
+							<path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/>
+						</svg>
 					</div>
 				</div>
+			</div>
 
-				<!-- Audio device selection -->
-				<div class="mb-4">
-					<label class="block text-sm font-medium mb-2" for="audioDevice">Microphone</label>
+			<!-- Device selectors -->
+			<div class="space-y-2">
+				<!-- Camera -->
+				<div class="flex items-center gap-3 bg-twilio-gray-80 rounded-lg px-4 py-3 border border-twilio-gray-70">
+					<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-twilio-gray-40 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/>
+					</svg>
 					<select
-						id="audioDevice"
-						bind:value={selectedAudioDevice}
-						onchange={changeAudioDevice}
-						class="w-full px-4 py-2 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 bg-white dark:bg-gray-700"
-					>
-						{#each audioDevices as device}
-							<option value={device.deviceId}>{device.label || `Microphone ${device.deviceId.slice(0, 8)}`}</option>
-						{/each}
-					</select>
-				</div>
-
-				<!-- Video device selection -->
-				<div class="mb-4">
-					<label class="block text-sm font-medium mb-2" for="videoDevice">Camera</label>
-					<select
-						id="videoDevice"
 						bind:value={selectedVideoDevice}
 						onchange={changeVideoDevice}
-						disabled={!videoEnabled}
-						class="w-full px-4 py-2 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 bg-white dark:bg-gray-700 disabled:opacity-50"
+						class="flex-1 bg-transparent text-white text-sm focus:outline-none cursor-pointer appearance-none"
 					>
 						{#each videoDevices as device}
-							<option value={device.deviceId}>{device.label || `Camera ${device.deviceId.slice(0, 8)}`}</option>
+							<option value={device.deviceId} class="bg-twilio-gray-80">
+								{device.label || `Camera ${device.deviceId.slice(0, 8)}`}
+							</option>
 						{/each}
 					</select>
+					<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-twilio-gray-40 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+					</svg>
 				</div>
 
-				<!-- Video toggle -->
-				<div class="mb-6">
-					<button
-						onclick={toggleVideo}
-						class="flex items-center gap-2 px-4 py-2 rounded-lg {videoEnabled ? 'bg-twilio-blue-60 text-white' : 'bg-twilio-gray-20 dark:bg-twilio-gray-80'}"
+				<!-- Microphone -->
+				<div class="flex items-center gap-3 bg-twilio-gray-80 rounded-lg px-4 py-3 border border-twilio-gray-70">
+					<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-twilio-gray-40 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="M12 1a4 4 0 014 4v6a4 4 0 01-8 0V5a4 4 0 014-4zm-7 10a7 7 0 0014 0h2a9 9 0 01-8 8.94V22h-2v-2.06A9 9 0 013 11H5z"/>
+					</svg>
+					<select
+						bind:value={selectedAudioDevice}
+						onchange={changeAudioDevice}
+						class="flex-1 bg-transparent text-white text-sm focus:outline-none cursor-pointer appearance-none"
 					>
-						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+						{#each audioDevices as device}
+							<option value={device.deviceId} class="bg-twilio-gray-80">
+								{device.label || `Microphone ${device.deviceId.slice(0, 8)}`}
+							</option>
+						{/each}
+					</select>
+					<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-twilio-gray-40 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+					</svg>
+				</div>
+
+				<!-- Speaker / Output -->
+				{#if outputDevices.length > 0}
+					<div class="flex items-center gap-3 bg-twilio-gray-80 rounded-lg px-4 py-3 border border-twilio-gray-70">
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-twilio-gray-40 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+							<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
 						</svg>
-						{videoEnabled ? 'Video On' : 'Video Off (Audio Only)'}
-					</button>
-				</div>
-
-				<!-- Join button -->
-				<div class="flex gap-4">
-					<button
-						onclick={() => { joinMethod = null; stopMediaStream(); }}
-						class="px-6 py-3 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 hover:bg-twilio-gray-10 dark:hover:bg-twilio-gray-80"
-					>
-						Back
-					</button>
-					<button
-						onclick={joinCall}
-						class="flex-1 py-3 bg-twilio-blue-60 hover:bg-twilio-blue-70 text-white font-semibold rounded-lg"
-					>
-						Join Call
-					</button>
-				</div>
-			</div>
-		{:else if joinMethod === 'phone'}
-			<div class="bg-twilio-gray-0 dark:bg-twilio-gray-90 rounded-lg shadow-xl p-8">
-				<h2 class="text-xl font-semibold mb-4">Enter Your Phone Number</h2>
-				<p class="text-sm text-twilio-gray-60 dark:text-twilio-gray-40 mb-6">
-					We'll call you at this number to connect you to the call.
-				</p>
-
-				<form onsubmit={(e) => { e.preventDefault(); submitPhoneNumber(); }}>
-					<input
-						type="tel"
-						bind:value={phoneNumber}
-						placeholder="+1 (555) 000-0000"
-						class="w-full px-4 py-3 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 bg-white dark:bg-gray-700 mb-6"
-						required
-					/>
-
-					<div class="flex gap-4">
-						<button
-							type="button"
-							onclick={() => { joinMethod = null; }}
-							class="px-6 py-3 rounded-lg border border-twilio-gray-30 dark:border-twilio-gray-70 hover:bg-twilio-gray-10 dark:hover:bg-twilio-gray-80"
+						<select
+							bind:value={selectedOutputDevice}
+							onchange={changeOutputDevice}
+							class="flex-1 bg-transparent text-white text-sm focus:outline-none cursor-pointer appearance-none"
 						>
-							Back
-						</button>
-						<button
-							type="submit"
-							class="flex-1 py-3 bg-twilio-green-60 hover:bg-twilio-green-70 text-white font-semibold rounded-lg"
-						>
-							Call Me
-						</button>
+							{#each outputDevices as device}
+								<option value={device.deviceId} class="bg-twilio-gray-80">
+									{device.label || `Speaker ${device.deviceId.slice(0, 8)}`}
+								</option>
+							{/each}
+						</select>
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-twilio-gray-40 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+						</svg>
 					</div>
-				</form>
+				{/if}
 			</div>
-		{/if}
+		</div>
+
 	</div>
 </div>

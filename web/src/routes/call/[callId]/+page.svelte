@@ -1,27 +1,30 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/auth';
 	import { apiPost } from '$lib/api';
-	import type { Room, LocalParticipant, RemoteParticipant, RemoteTrack } from 'twilio-video';
+	import { isPhoneIdentity } from '$lib/utils/phone';
+	import ParticipantTile from '$lib/components/ParticipantTile.svelte';
+	import InvitePhoneModal from '$lib/components/InvitePhoneModal.svelte';
+	import type { Room, LocalParticipant, RemoteParticipant, RemoteTrack, LocalTrackPublication, RemoteTrackPublication } from 'twilio-video';
 
-	let callId = $state('');
+	let callId = $derived($page.params.callId ?? '');
 	let user = $state<any>(null);
 	let room: Room | null = null;
-	let localParticipant: LocalParticipant | null = null;
+	let localParticipant: LocalParticipant | null = $state<LocalParticipant | null>(null);
 	let remoteParticipants = $state<RemoteParticipant[]>([]);
 	let error = $state('');
 	let connecting = $state(false);
 	let audioEnabled = $state(true);
 	let videoEnabled = $state(false);
+	let localAudioTrack = $state<MediaStreamTrack | null>(null);
+	let localVideoTrack = $state<MediaStreamTrack | null>(null);
+	let remoteTrackMap = $state<Map<string, { audio: MediaStreamTrack | null; video: MediaStreamTrack | null }>>(new Map());
+	let showInviteModal = $state(false);
 
 	authStore.subscribe((value) => {
 		user = value;
-	});
-
-	$effect(() => {
-		callId = $page.params.callId;
 	});
 
 	onMount(async () => {
@@ -62,6 +65,13 @@
 
 			localParticipant = room.localParticipant;
 
+			// Capture local audio track for waveform
+			localParticipant.audioTracks.forEach((pub: LocalTrackPublication) => {
+				if (pub.track) {
+					localAudioTrack = (pub.track as any).mediaStreamTrack;
+				}
+			});
+
 			// Handle existing participants
 			room.participants.forEach(handleParticipantConnected);
 
@@ -81,31 +91,65 @@
 		}
 	}
 
+	// Attach a remote audio/video track: use SDK's attach() for audio playback,
+	// and store the mediaStreamTrack for waveform visualization.
+	function attachTrack(track: RemoteTrack, participantSid: string) {
+		const entry = remoteTrackMap.get(participantSid) || { audio: null, video: null };
+		if (track.kind === 'audio') {
+			// Use SDK's attach() to create a proper <audio> element for playback
+			const audioEl = (track as any).attach() as HTMLAudioElement;
+			audioEl.setAttribute('data-participant', participantSid);
+			document.body.appendChild(audioEl);
+			entry.audio = (track as any).mediaStreamTrack || null;
+		} else if (track.kind === 'video') {
+			entry.video = (track as any).mediaStreamTrack || null;
+		}
+		remoteTrackMap = new Map(remoteTrackMap.set(participantSid, entry));
+	}
+
+	// Detach a remote audio/video track and clean up DOM elements.
+	function detachTrack(track: RemoteTrack, participantSid: string) {
+		const entry = remoteTrackMap.get(participantSid) || { audio: null, video: null };
+		if (track.kind === 'audio') {
+			// Remove SDK-created audio elements
+			(track as any).detach().forEach((el: HTMLElement) => el.remove());
+			entry.audio = null;
+		} else if (track.kind === 'video') {
+			entry.video = null;
+		}
+		remoteTrackMap = new Map(remoteTrackMap.set(participantSid, entry));
+	}
+
 	function handleParticipantConnected(participant: RemoteParticipant) {
 		remoteParticipants = [...remoteParticipants, participant];
 
-		participant.tracks.forEach((publication) => {
-			if (publication.track) {
-				handleTrackPublished(publication.track, participant);
+		// Handle existing tracks
+		participant.tracks.forEach((publication: RemoteTrackPublication) => {
+			if (publication.isSubscribed && publication.track) {
+				attachTrack(publication.track as RemoteTrack, participant.sid);
 			}
 		});
 
-		participant.on('trackSubscribed', (track) => handleTrackPublished(track, participant));
+		// Handle new tracks
+		participant.on('trackSubscribed', (track: RemoteTrack) => {
+			attachTrack(track, participant.sid);
+		});
+
+		participant.on('trackUnsubscribed', (track: RemoteTrack) => {
+			detachTrack(track, participant.sid);
+		});
 	}
 
 	function handleParticipantDisconnected(participant: RemoteParticipant) {
-		remoteParticipants = remoteParticipants.filter(p => p.sid !== participant.sid);
-	}
-
-	function handleTrackPublished(track: RemoteTrack, participant: RemoteParticipant) {
-		const participantDiv = document.getElementById(`participant-${participant.sid}`);
-		if (participantDiv) {
-			const mediaContainer = participantDiv.querySelector('.media-container');
-			if (mediaContainer) {
-				const element = track.attach();
-				mediaContainer.appendChild(element);
+		// Detach all tracks for this participant
+		participant.tracks.forEach((publication: RemoteTrackPublication) => {
+			if (publication.track) {
+				(publication.track as any).detach().forEach((el: HTMLElement) => el.remove());
 			}
-		}
+		});
+		remoteParticipants = remoteParticipants.filter(p => p.sid !== participant.sid);
+		remoteTrackMap.delete(participant.sid);
+		remoteTrackMap = new Map(remoteTrackMap);
 	}
 
 	async function toggleAudio() {
@@ -125,25 +169,17 @@
 		if (!localParticipant) return;
 
 		if (videoEnabled) {
-			// Disable video
 			localParticipant.videoTracks.forEach((publication) => {
 				publication.track.stop();
 				localParticipant?.unpublishTrack(publication.track);
 			});
+			localVideoTrack = null;
 			videoEnabled = false;
 		} else {
-			// Enable video
 			const Video = await import('twilio-video');
 			const videoTrack = await Video.createLocalVideoTrack();
 			await localParticipant.publishTrack(videoTrack);
-
-			// Attach to local video element
-			const localVideo = document.getElementById('local-video');
-			if (localVideo) {
-				const element = videoTrack.attach();
-				localVideo.appendChild(element);
-			}
-
+			localVideoTrack = videoTrack.mediaStreamTrack;
 			videoEnabled = true;
 		}
 	}
@@ -152,7 +188,7 @@
 		if (room) {
 			room.disconnect();
 		}
-		goto('/');
+		goto(`/call/${callId}/summary`);
 	}
 
 	function copyCallLink() {
@@ -175,6 +211,12 @@
 				class="text-sm px-3 py-1 rounded bg-twilio-gray-20 dark:bg-twilio-gray-80 hover:bg-twilio-gray-30 dark:hover:bg-twilio-gray-70"
 			>
 				Copy Invite Link
+			</button>
+			<button
+				onclick={() => showInviteModal = true}
+				class="text-sm px-3 py-1 rounded bg-twilio-green-60 hover:bg-twilio-green-70 text-white"
+			>
+				Invite via Phone
 			</button>
 		</div>
 		<button
@@ -204,42 +246,29 @@
 			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 h-full">
 				<!-- Local Participant -->
 				{#if localParticipant}
-					<div class="bg-twilio-gray-90 rounded-lg overflow-hidden relative aspect-video">
-						<div id="local-video" class="media-container w-full h-full flex items-center justify-center">
-							{#if !videoEnabled}
-								<div class="flex flex-col items-center">
-									<div class="w-20 h-20 rounded-full bg-twilio-blue-60 flex items-center justify-center text-white text-2xl font-bold mb-2">
-										{(user?.displayName || user?.email || 'You')[0].toUpperCase()}
-									</div>
-								</div>
-							{/if}
-						</div>
-						<div class="absolute bottom-2 left-2 bg-black bg-opacity-50 px-3 py-1 rounded text-white text-sm">
-							{user?.displayName || user?.email || 'You'} (You)
-						</div>
-						<div class="absolute top-2 right-2 flex gap-1">
-							<span class="px-2 py-1 bg-twilio-green-60 text-white text-xs rounded">Web</span>
-						</div>
-					</div>
+					<ParticipantTile
+						identity={user?.contact || 'You'}
+						type="browser"
+						isLocal={true}
+						audioTrack={localAudioTrack}
+						videoTrack={localVideoTrack}
+						audioEnabled={audioEnabled}
+						videoEnabled={videoEnabled}
+						displayName={user?.displayName}
+					/>
 				{/if}
 
 				<!-- Remote Participants -->
 				{#each remoteParticipants as participant (participant.sid)}
-					<div id="participant-{participant.sid}" class="bg-twilio-gray-90 rounded-lg overflow-hidden relative aspect-video">
-						<div class="media-container w-full h-full flex items-center justify-center">
-							<div class="flex flex-col items-center">
-								<div class="w-20 h-20 rounded-full bg-twilio-purple-60 flex items-center justify-center text-white text-2xl font-bold mb-2">
-									{participant.identity[0].toUpperCase()}
-								</div>
-							</div>
-						</div>
-						<div class="absolute bottom-2 left-2 bg-black bg-opacity-50 px-3 py-1 rounded text-white text-sm">
-							{participant.identity}
-						</div>
-						<div class="absolute top-2 right-2 flex gap-1">
-							<span class="px-2 py-1 bg-twilio-green-60 text-white text-xs rounded">Web</span>
-						</div>
-					</div>
+					{@const tracks = remoteTrackMap.get(participant.sid)}
+					<ParticipantTile
+						identity={participant.identity}
+						type={isPhoneIdentity(participant.identity) ? 'pstn' : 'browser'}
+						audioTrack={tracks?.audio || null}
+						videoTrack={tracks?.video || null}
+						audioEnabled={true}
+						videoEnabled={!!tracks?.video}
+					/>
 				{/each}
 			</div>
 		</div>
@@ -282,4 +311,10 @@
 			</div>
 		</div>
 	{/if}
+
+	<InvitePhoneModal
+		roomName={callId}
+		open={showInviteModal}
+		onclose={() => showInviteModal = false}
+	/>
 </div>
