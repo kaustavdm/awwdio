@@ -141,6 +141,8 @@ cp sample.env .env && source .env
 - Before any `git reset` or destructive git operation, create a backup branch: `git branch backup/<name>`
 - `git reset HEAD` (no `--hard`) is non-destructive — working tree is untouched
 - When making multiple unrelated changes, stage and commit each logical group separately
+- **Never automatically commit** planning docs, specs, or LEARNINGS.md — always wait for explicit user instruction to commit
+- `docs/` and `LEARNINGS.md` are gitignored; do not stage or commit them under any circumstances
 
 ## Claude Code Guidance
 
