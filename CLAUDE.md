@@ -1,181 +1,159 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
-**IMPORTANT**: Before starting any work, read LEARNINGS.md for detailed technical implementation patterns, API specifications, and discovered conventions. Update LEARNINGS.md with new findings as you work.
+**Note:** `LEARNINGS.md` and `docs/` are gitignored — do not re-add them to git.
 
 ## Project Overview
 
-Awwdio is a lightweight fullstack audio and video conversation application built with Go and Svelte/SvelteKit, leveraging Twilio's Programmable Video API.
+Awwdio is a fullstack audio/video conversation app built with Go and SvelteKit, using Twilio APIs for video, voice, sync, and conversational intelligence.
 
 **Architecture:**
-- **Backend**: Go server handling authentication, room management, and API endpoints
-- **Frontend**: Svelte/SvelteKit application (to be implemented in `web/` directory)
-- **Deployment**: Single compiled Go binary with embedded frontend resources
+- **Backend**: Go server — video, voice, sync, intelligence, webhooks, auth
+- **Frontend**: SvelteKit app in `web/`, built to `web/build/` (embedded in Go binary)
+- **Deployment**: Single compiled Go binary with embedded frontend
 
-The backend uses Go's standard library wherever possible, with the Twilio SDK being the primary external dependency for video functionality.
+Standard library only — no external deps except Twilio SDK.
 
 ## Common Commands
 
-### Building and Running
-
-**Production Build** (creates single binary with embedded frontend):
 ```bash
-# 1. Build the frontend
-cd web && npm run build && cd ..
+# Full build (frontend + backend)
+./build.sh
 
-# 2. Build the Go binary (embeds frontend resources from web/build/)
+# Frontend only
+cd web && npm run build
+
+# Backend only (embeds web/build/)
 go build -o bin/awwdio
-```
 
-**Run the built binary:**
-```bash
-./bin/awwdio
-```
-
-**Development Mode** (run backend directly from source):
-```bash
+# Dev mode (backend only, no frontend embedding)
 go run main.go
+
+# Frontend dev server (proxies /api/* to localhost:8080)
+cd web && npm run dev
 ```
 
-**Note**: The Go binary embeds:
-- Frontend build output from `web/build/` (SvelteKit app files) using `//go:embed web/build/*`
-- Static assets from `web/static/` (files served at root like favicon.ico) using `//go:embed web/static/*`
-All files in `web/static/` are served at the root URL path (e.g., `web/static/favicon.ico` → `http://localhost:8080/favicon.ico`).
+## Environment Variables
 
-### Environment Setup
+**Required:**
+- `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_SECRET`
+- `TWILIO_VERIFY_SERVICE_SID` — for OTP authentication
+- `JWT_SECRET` — min 32 chars, signs auth tokens
 
-The application requires the following environment variables:
+**Optional (voice/webhook features):**
+- `TWILIO_AUTH_TOKEN` — webhook signature validation
+- `TWILIO_PHONE_NUMBER` — outbound PSTN calls
+- `BASE_URL` — webhook callback base URL (e.g. ngrok URL)
+- `TWILIO_INTELLIGENCE_SERVICE_SID` — post-call analysis
+- `TWILIO_SYNC_SERVICE_SID` — pipeline state management
+- `PORT` (default: 8080), `DEBUG=true`, `JSON_LOGGER=true`
 
-- `TWILIO_ACCOUNT_SID`: Your Twilio account SID (required)
-- `TWILIO_API_KEY`: Twilio API key SID (required)
-- `TWILIO_API_SECRET`: Twilio API secret (required)
-- `PORT`: Server port (optional, defaults to 8080)
-
-Optional configuration:
-- `DEBUG`: Set to `true` to enable debug logging
-- `JSON_LOGGER`: Set to `true` to use JSON-formatted logs
-
-Quick setup:
 ```bash
-cp sample.env .env
-# Edit .env with your actual credentials
-source .env
+cp sample.env .env && source .env
 ```
 
 ## Architecture
 
-**Fullstack**: Single Go binary with embedded SvelteKit frontend. Frontend in `web/`, build output in `web/build/` (embedded), static assets in `web/static/` served at root.
+**Backend Structure:**
+- `main.go` — HTTP server, three-tier nested mux, slog, embed.FS for frontend
+- `config/config.go` — env var loading and validation
+- `internal/api/api.go` — registers all module routes
+- `internal/api/auth/{auth.go,jwt.go}` — OTP via Twilio Verify + JWT (HS256, crypto/hmac+sha256)
+- `internal/api/middleware/auth.go` — JWT validation, sets user in context
+- `internal/api/middleware/twilio.go` — Twilio webhook signature validation
+- `internal/api/response/` — shared JSON response helper
+- `internal/api/video/` — room management and token generation
+- `internal/api/voice/` — outbound PSTN dialing and TwiML
+- `internal/api/sync/` — Twilio Sync token
+- `internal/api/intelligence/` — post-call transcript and operator results
+- `internal/api/webhooks/` — room/composition/transcript/sync status callbacks
 
-**Backend Structure**:
-- `main.go`: HTTP server with three-tier nested mux routing, slog logging, embed.FS for frontend
-- `config/config.go`: Environment variable loading and validation
-- `internal/api/`: Modular API with Handler struct + Register() pattern
-- `internal/api/video/`: Twilio token generation and room management
-- `internal/api/auth/`: OTP authentication via Twilio Verify
+**Request Flow:** Client → nested mux → optional auth middleware → handler → Twilio API → JSON response
 
-**Request Flow**: Client → Nested mux routing → Handler → Twilio API → JSON response
+**Three-tier mux routing:** Main mux → `/api/` submux → module submux (`/auth/`, `/video/`, `/voice/`, etc.)
+
+**Frontend Structure:**
+- `web/src/lib/api.ts` — fetch wrapper: adds Bearer token, redirects to `/login` on 401
+- `web/src/lib/stores/auth.ts` — user auth state (persisted to localStorage)
+- `web/src/lib/types.ts` — shared TypeScript types
+- `web/src/lib/stores/call.ts`, `sync.ts` — call and sync state
+- `web/src/lib/utils/audio.ts`, `phone.ts` — audio level and phone formatting helpers
+- `web/src/lib/components/` — ParticipantTile, AudioWaveform, TranscriptViewer, InsightsPanel, PipelineStepper, SyncStatusBadge, InvitePhoneModal
+
+## API Endpoints
+
+| Endpoint | Method | Auth | Notes |
+|----------|--------|------|-------|
+| `/api/auth/send-otp` | POST | No | `{channel, to}` |
+| `/api/auth/verify-otp` | POST | No | `{channel, to, otp}` → `{token}` |
+| `/api/video/token` | POST | Yes | `{room}` → `{token}` |
+| `/api/video/room` | GET | Yes | `?name=` → room details |
+| `/api/video/room` | POST | Yes | `{name}` → create room |
+| `/api/voice/dial` | POST | Yes | `{roomName, phoneNumber}` |
+| `/api/voice/twiml` | POST | No | TwiML response for Twilio |
+| `/api/voice/status` | POST | No | Call status callback |
+| `/api/sync/token` | POST | Yes | → `{token}` |
+| `/api/intelligence/results/:room` | GET | Yes | Operator results |
+| `/api/intelligence/sentences/:room` | GET | Yes | Transcript sentences |
+| `/api/webhooks/room-status` | POST | No | Room completion trigger |
+| `/api/webhooks/composition` | POST | No | Composition status |
+| `/api/webhooks/transcript` | POST | No | Transcript ready |
+| `/api/webhooks/sync` | POST | No | Sync document update |
+
+## Pages
+
+1. **`/`** — Landing, Start Call button; redirects to login if unauthenticated
+2. **`/login`** — OTP flow: email/phone → verify → display name
+3. **`/call/[callId]/setup`** — Two-column pre-call setup:
+   - Left: name, email, headphones toggle, join button
+   - Right: auto-started video preview + camera/mic/speaker device selectors
+   - Headphones toggle sets `echoCancellation` constraint in getUserMedia
+   - Video resolution badge reads from `videoTrack.getSettings()` after `loadedmetadata`
+4. **`/call/[callId]`** — Active call: participant grid, audio/video toggles, PSTN invite
+5. **`/call/[callId]/summary`** — Post-call: PipelineStepper (composing→transcribing→ready via Sync), TranscriptViewer, InsightsPanel
 
 ## Development Principles
 
-### Dependency Management
-**Always prefer Go's standard library over third-party dependencies.** The only exception is the Twilio SDK, which is necessary for video functionality. This principle ensures:
-- Minimal external dependencies
-- Reduced security surface area
-- Better long-term maintainability
-- Smaller binary size
+### Backend
 
-### Backend Development
+- **Handler pattern**: `type Handler struct` + `NewHandler(cfg)` + `Register(mux)`
+- **Adding a new module**: create package → implement Handler → register in `internal/api/api.go`
+- **Protecting routes**: wrap submux with `middleware.RequireAuth(secret)(submux)`
+- **Webhook handlers**: validate signature via `internal/api/middleware/twilio.go`
+- **All JSON responses**: use `internal/api/response` helper
+- Use `slog` for logging; early return error handling with clear messages
+- No external dependencies beyond Twilio SDK
 
-- When adding new API endpoints, follow the pattern in `internal/api/video/video.go` by adding handler methods and registering them in the `Register` function
-- New API modules should be registered in `internal/api/api.go`
-- The codebase uses Go's standard library for HTTP handling with nested mux instances for route organization
-- Error handling follows Go's idiomatic approach with early returns and clear error messages
-- Use `slog` (standard library) for all logging needs
+### Frontend
 
-### Frontend Development
+- **Svelte 5 runes** throughout: `$state`, `$effect`, `$derived`
+- **Auth store** is a Svelte writable store — use `.subscribe()` at script top level, not inside `onMount`:
+  ```ts
+  authStore.subscribe((value) => { user = value; });
+  ```
+- **API calls**: always use `web/src/lib/api.ts` helpers — they attach the Bearer token and handle 401s
+- **Dark mode**: call UI pages use dark theme (`bg-twilio-gray-90`, `bg-twilio-gray-80`, etc.)
+- Build with `@sveltejs/adapter-static`; all routes fall back to `index.html`
 
-**Structure:**
-- Frontend source code lives in `web/` directory
-- SvelteKit build outputs to `web/build/` directory (configured in `svelte.config.js`, gitignored)
-- Static assets in `web/static/` are served at root level in the final binary
-- Frontend communicates with backend exclusively through `/api/*` endpoints
-- During development, run SvelteKit dev server separately and proxy API requests to the Go backend (configured in `vite.config.ts`)
+### Git Safety
 
-**Implemented Pages:**
-1. **Homepage** (`/`): Landing page with "Start Call" CTA button
-   - Redirects to login if user not authenticated
-   - Shows user info when logged in
-2. **Login** (`/login`): Multi-step authentication flow
-   - Email input → OTP verification → Display name (optional)
-   - Uses Twilio Verify (API endpoints to be implemented)
-3. **Call Setup** (`/call/[callId]/setup`): Pre-call device configuration
-   - Join via web or phone options
-   - Audio/video device selection
-   - Live audio meter and video preview
-4. **Call** (`/call/[callId]`): Active call interface
-   - Participant grid with local and remote participants
-   - Audio/video toggle controls
-   - Twilio Video SDK integration
-   - Invite link sharing
-
-**Key Components:**
-- `web/src/lib/stores/auth.ts`: User authentication state management
-- `web/src/app.css`: TailwindCSS configuration with dark mode support
-- `web/src/routes/+layout.svelte`: Global layout with theme toggle
-
-**Development Workflow:**
-```bash
-# Install dependencies
-cd web && npm install
-
-# Run dev server (with API proxy to localhost:8080)
-npm run dev
-
-# Build for production
-npm run build
-
-# Output will be in web/build/ ready for Go embedding
-```
-
-**Before production builds:**
-- Ensure frontend build completes successfully before compiling the Go binary
-- The build process uses `@sveltejs/adapter-static` to generate static files
-- All routes use client-side routing with fallback to `index.html`
+- Before any `git reset` or destructive git operation, create a backup branch: `git branch backup/<name>`
+- `git reset HEAD` (no `--hard`) is non-destructive — working tree is untouched
+- When making multiple unrelated changes, stage and commit each logical group separately
 
 ## Claude Code Guidance
 
-This section provides specific instructions for Claude Code when working with this repository.
+### Output Token Limit
 
-### Output Token Limit Workaround
-
-Claude Code has a per-response output token limit controlled by `CLAUDE_CODE_MAX_OUTPUT_TOKENS`. If you encounter the error:
-
-```
-API Error: Claude's response exceeded the 4096 output token maximum
-```
-
-When writing large files or making extensive changes, break the work into smaller chunks:
-
-1. **Use multiple tool calls** instead of large single responses
-2. **Write files in sections**: Create the file structure first, then fill in implementations across multiple responses
-3. **Edit incrementally**: Make focused edits to specific sections rather than rewriting entire files
-4. **Summarize between chunks**: After each chunk, provide a brief status update before continuing
-
-**Example Chunking Strategy:**
-```
-Response 1: Create file skeleton and imports
-Response 2: Implement first major function/section
-Response 3: Implement second major function/section
-Response 4: Add remaining functions and exports
-```
-
-This approach ensures all work is completed even with output token constraints.
+If you hit `API Error: Claude's response exceeded the 4096 output token maximum`, break work into chunks:
+1. Write file skeleton and imports first
+2. Implement one section per response
+3. Edit incrementally rather than rewriting entire files
 
 ### Implementation Guidelines
 
-- Follow Handler struct + Register() pattern from `internal/api/video/`
-- Use standard library for HTTP handling, slog for logging
-- Early return error handling with clear messages
+- Follow Handler struct + Register() pattern from any existing module in `internal/api/`
+- All new backend services: config field → `LoadConfig()` entry → `api.go` registration → package with Handler
+- Use `internal/api/response` for all JSON responses
 - No emojis in code or comments
-- See LEARNINGS.md for API specifications and pending features
