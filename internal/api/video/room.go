@@ -1,27 +1,25 @@
 package video
 
 import (
-	"encoding/json"
+	"log/slog"
 	"net/http"
+
+	"github.com/kaustavdm/awwdio/internal/api/response"
 )
 
 func (h *Handler) getRoom(w http.ResponseWriter, r *http.Request) {
-	// Extract room name from URL
-	roomName := r.URL.Query().Get("roomName")
-	if roomName == "" {
-		http.Error(w, "Room name is required", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		response.Err(w, http.StatusBadRequest, "Room name is required")
 		return
 	}
 
-	// Fetch room details using Twilio API
-	room, err := h.twilioClient.VideoV1.FetchRoom(roomName)
+	room, err := h.twilioClient.VideoV1.FetchRoom(name)
 	if err != nil {
-		http.Error(w, "Failed to fetch room details", http.StatusInternalServerError)
+		slog.Error("Failed to fetch room", "error", err, "name", name)
+		response.Err(w, http.StatusInternalServerError, "Failed to fetch room details")
 		return
 	}
 
-	// Send JSON response with room details
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(room)
+	response.JSON(w, http.StatusOK, room)
 }

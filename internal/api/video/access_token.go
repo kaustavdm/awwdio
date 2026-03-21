@@ -66,6 +66,16 @@ func (h *Handler) tokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ensure room exists with the correct type before generating the token.
+	// This prevents the JS SDK from creating an ad-hoc room with the
+	// account's default topology (which may be a legacy type).
+	if err := h.ensureRoom(req.Room); err != nil {
+		slog.Error("Failed to ensure room exists", "error", err, "room", req.Room)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to prepare room"})
+		return
+	}
+
 	// Generate token using authenticated user identity
 	token, err := accessToken(h.config, user.Subject, req.Room)
 	if err != nil {

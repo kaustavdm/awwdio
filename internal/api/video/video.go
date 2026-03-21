@@ -27,4 +27,5 @@ func NewHandler(cfg *config.Config) *Handler {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /token", h.tokenHandler)
 	mux.HandleFunc("GET /room", h.getRoom)
+	mux.HandleFunc("POST /room", h.createRoom)
 }
